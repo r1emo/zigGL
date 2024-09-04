@@ -54,6 +54,9 @@ const Mesh = struct {
         // set the vertex attributes pointers
         gl.VertexAttribPointer(0, 3, gl.FLOAT, gl.FALSE, 3 * @sizeOf(f32), 0);
         gl.EnableVertexArrayAttrib(self.VAO, 0);
+
+        gl.BindBuffer(gl.ARRAY_BUFFER, 0);
+        gl.BindVertexArray(0);
     }
 
     fn bindMesh(self: *Mesh) void {
@@ -66,6 +69,54 @@ const Mesh = struct {
         gl.DeleteVertexArrays(1, (&self.VAO)[0..1]);
         gl.DeleteBuffers(1, (&self.VBO)[0..1]);
         gl.DeleteBuffers(1, (&self.EBO)[0..1]);
+    }
+};
+
+const Shader = struct {
+    shader: gl.uint = undefined,
+    shaderType: c_uint = undefined,
+
+    fn createShader(self: *Shader, shaderCode: [*]const [*]const u8, shaderType: c_uint) c_int {
+        self.shaderType = shaderType;
+
+        // get vertex shader and process it
+        self.shader = gl.CreateShader(self.shaderType);
+        gl.ShaderSource(self.shader, 1, shaderCode, null);
+        gl.CompileShader(self.shader);
+
+        // variables used for tracking error logs
+        var success: c_int = undefined;
+
+        // check if vertex shader compiled successfully
+        gl.GetShaderiv(self.shader, gl.COMPILE_STATUS, &success);
+
+        return success;
+    }
+
+    fn deleteShader(self: *Shader) void {
+        gl.DeleteShader(self.shader);
+    }
+};
+
+const Program = struct {
+    program: gl.uint = undefined,
+
+    fn createProgram(self: *Program, vertexShader: c_uint, fragmentShader: c_uint) c_int {
+        self.program = gl.CreateProgram();
+
+        gl.AttachShader(self.program, vertexShader);
+        gl.AttachShader(self.program, fragmentShader);
+        gl.LinkProgram(self.program);
+
+        var success: c_int = undefined;
+
+        gl.GetProgramiv(self.program, gl.LINK_STATUS, &success);
+
+        return success;
+    }
+
+    fn deleteProgram(self: *Program) void {
+        gl.DeleteProgram(self.program);
     }
 };
 
@@ -92,7 +143,7 @@ pub fn main() !void {
         std.log.err("failed to create GLFW window: {?s}", .{glfw.getErrorString()});
         return error.CreateWindowFailed;
     };
-    defer window.destroy();
+    defer window.destroy(); // delete window when program ends
 
     glfw.makeContextCurrent(window);
 
@@ -101,58 +152,34 @@ pub fn main() !void {
     gl.makeProcTableCurrent(&procs);
     defer gl.makeProcTableCurrent(null);
 
-    // get vertex shader and process it
-    var vertexShader: gl.uint = undefined;
-    vertexShader = gl.CreateShader(gl.VERTEX_SHADER);
-    gl.ShaderSource(vertexShader, 1, (&vertexShaderCode.ptr)[0..1], null);
-    gl.CompileShader(vertexShader);
+    var infoLog: [512:0]u8 = undefined;
 
-    // variables used for tracking error logs
-    var success: c_int = undefined;
-    var infoLog: [512:0]u8 = undefined; // I believe this is const since the infoLog variable is a pointer pointing to an array of 512 u8
+    var vertexShader = Shader{};
 
-    // check if vertex shader compiled successfully
-    gl.GetShaderiv(vertexShader, gl.COMPILE_STATUS, &success);
-
-    if (success == gl.FALSE) {
-        gl.GetShaderInfoLog(vertexShader, 512, null, &infoLog);
+    if (vertexShader.createShader((&vertexShaderCode.ptr)[0..1], gl.VERTEX_SHADER) == gl.FALSE) {
+        gl.GetShaderInfoLog(vertexShader.shader, 512, null, &infoLog);
         std.log.err("Failed to compile vertext shader: {s}", .{infoLog});
         return error.CompileVertexShaderFailed;
     }
 
-    // get fragment shader and process it
-    var fragmentShader: gl.uint = undefined;
-    fragmentShader = gl.CreateShader(gl.FRAGMENT_SHADER);
-    gl.ShaderSource(fragmentShader, 1, (&fragmentShaderCode.ptr)[0..1], null);
-    gl.CompileShader(fragmentShader);
+    var fragmentShader = Shader{};
 
-    // check if fragment shader compiled successfully
-    gl.GetShaderiv(fragmentShader, gl.COMPILE_STATUS, &success);
-
-    if (success == gl.FALSE) {
-        gl.GetShaderInfoLog(fragmentShader, 512, null, &infoLog);
+    if (fragmentShader.createShader((&fragmentShaderCode.ptr)[0..1], gl.FRAGMENT_SHADER) == gl.FALSE) {
+        gl.GetShaderInfoLog(fragmentShader.shader, 512, null, &infoLog);
         std.log.err("Failed to compile fragment shader: {s}", .{infoLog});
         return error.CompileFragmentShaderFailed;
     }
 
     // create shader program and link previously compiled shaders to it
-    var shaderProgram: gl.uint = undefined;
-    shaderProgram = gl.CreateProgram();
-    defer gl.DeleteProgram(shaderProgram);
-
-    gl.AttachShader(shaderProgram, vertexShader);
-    gl.AttachShader(shaderProgram, fragmentShader);
-    gl.LinkProgram(shaderProgram);
-
-    // check if any of that jazz failed
-    gl.GetProgramiv(shaderProgram, gl.LINK_STATUS, &success);
-    if (success == gl.FALSE) {
-        gl.GetShaderInfoLog(fragmentShader, 512, null, &infoLog);
+    var shaderProgram = Program{};
+    defer shaderProgram.deleteProgram();
+    if (shaderProgram.createProgram(vertexShader.shader, fragmentShader.shader) == gl.FALSE) {
+        gl.GetShaderInfoLog(shaderProgram.program, 512, null, &infoLog);
         std.log.err("Failed to create shader program: {s}", .{infoLog});
         return error.LinkProgramFailed;
     }
-    gl.DeleteShader(vertexShader);
-    gl.DeleteShader(fragmentShader);
+    vertexShader.deleteShader();
+    fragmentShader.deleteShader();
 
     // the points of our rectangle
     const vertices = [_]f32{
@@ -191,7 +218,7 @@ pub fn main() !void {
         gl.Clear(gl.COLOR_BUFFER_BIT);
 
         // draw triangle
-        gl.UseProgram(shaderProgram);
+        gl.UseProgram(shaderProgram.program);
         mesh.bindMesh();
 
         window.swapBuffers();
