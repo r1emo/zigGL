@@ -5,26 +5,6 @@ const gl = @import("gl");
 // Procedure table that will hold OpenGL functions loaded at runtime.
 var procs: gl.ProcTable = undefined;
 
-const vertexShaderCode: [:0]const u8 = // takes a vertext and determines if it's within visible space
-    \\#version 450 core
-    \\layout (location = 0) in vec3 aPos;
-    \\
-    \\void main()
-    \\{
-    \\  gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.0f);
-    \\}
-;
-
-const fragmentShaderCode: [:0]const u8 = // determines the color of the pixels being rendered
-    \\#version 450 core
-    \\out vec4 FragColor;
-    \\
-    \\void main()
-    \\{
-    \\  FragColor = vec4(1.0f, 0.5f, 0.2f, 1.0f);
-    \\} 
-;
-
 const Mesh = struct {
     vertices: [32]f32 = [1]f32{0} ** 32,
     vertexCount: u32 = 0,
@@ -73,49 +53,54 @@ const Mesh = struct {
 };
 
 const Shader = struct {
-    shader: gl.uint = undefined,
-    shaderType: c_uint = undefined,
+    program: u32 = 0,
+    vertexShader: u32 = 0,
+    fragmentShader: u32 = 0,
 
-    fn createShader(self: *Shader, shaderCode: [*]const [*]const u8, shaderType: c_uint) c_int {
-        self.shaderType = shaderType;
+    vertexSource: []const u8,
+    fragmentSource: []const u8,
 
+    // ! -- TODO: ADD ERROR HANDLING WITH SPECIFIC ERRORS FOR WHEN IT FAILS INSTEAD OF BEING LAZY
+    fn createShader(self: *Shader) c_int {
         // get vertex shader and process it
-        self.shader = gl.CreateShader(self.shaderType);
-        gl.ShaderSource(self.shader, 1, shaderCode, null);
-        gl.CompileShader(self.shader);
+        self.vertexShader = gl.CreateShader(gl.VERTEX_SHADER);
+        gl.ShaderSource(self.vertexShader, 1, (&self.vertexSource.ptr)[0..1], null);
+        gl.CompileShader(self.vertexShader);
 
         // variables used for tracking error logs
         var success: c_int = undefined;
 
         // check if vertex shader compiled successfully
-        gl.GetShaderiv(self.shader, gl.COMPILE_STATUS, &success);
+        gl.GetShaderiv(self.vertexShader, gl.COMPILE_STATUS, &success);
 
-        return success;
-    }
+        if (success == gl.FALSE)
+            return success;
 
-    fn deleteShader(self: *Shader) void {
-        gl.DeleteShader(self.shader);
-    }
-};
+        // get fragment shader and process it
+        self.fragmentShader = gl.CreateShader(gl.FRAGMENT_SHADER);
+        gl.ShaderSource(self.fragmentShader, 1, (&self.fragmentSource.ptr)[0..1], null);
+        gl.CompileShader(self.fragmentShader);
 
-const Program = struct {
-    program: gl.uint = undefined,
+        // check if vertex shader compiled successfully
+        gl.GetShaderiv(self.fragmentShader, gl.COMPILE_STATUS, &success);
 
-    fn createProgram(self: *Program, vertexShader: c_uint, fragmentShader: c_uint) c_int {
+        if (success == gl.FALSE)
+            return success;
+
         self.program = gl.CreateProgram();
 
-        gl.AttachShader(self.program, vertexShader);
-        gl.AttachShader(self.program, fragmentShader);
+        gl.AttachShader(self.program, self.vertexShader);
+        gl.AttachShader(self.program, self.fragmentShader);
         gl.LinkProgram(self.program);
-
-        var success: c_int = undefined;
 
         gl.GetProgramiv(self.program, gl.LINK_STATUS, &success);
 
         return success;
     }
 
-    fn deleteProgram(self: *Program) void {
+    fn deleteShader(self: *Shader) void {
+        gl.DeleteShader(self.vertexShader);
+        gl.DeleteShader(self.fragmentShader);
         gl.DeleteProgram(self.program);
     }
 };
@@ -154,32 +139,21 @@ pub fn main() !void {
 
     var infoLog: [512:0]u8 = undefined;
 
-    var vertexShader = Shader{};
+    var shader = Shader{
+        .vertexSource = @embedFile("./shaders/triangleVertexShader.vert"),
+        .fragmentSource = @embedFile("./shaders/triangleFragmentShader.frag"),
+    };
+    defer shader.deleteShader();
 
-    if (vertexShader.createShader((&vertexShaderCode.ptr)[0..1], gl.VERTEX_SHADER) == gl.FALSE) {
-        gl.GetShaderInfoLog(vertexShader.shader, 512, null, &infoLog);
+    if (shader.createShader() == gl.FALSE) {
+        gl.GetShaderInfoLog(shader.vertexShader, 512, null, &infoLog);
         std.log.err("Failed to compile vertext shader: {s}", .{infoLog});
-        return error.CompileVertexShaderFailed;
-    }
-
-    var fragmentShader = Shader{};
-
-    if (fragmentShader.createShader((&fragmentShaderCode.ptr)[0..1], gl.FRAGMENT_SHADER) == gl.FALSE) {
-        gl.GetShaderInfoLog(fragmentShader.shader, 512, null, &infoLog);
-        std.log.err("Failed to compile fragment shader: {s}", .{infoLog});
-        return error.CompileFragmentShaderFailed;
-    }
-
-    // create shader program and link previously compiled shaders to it
-    var shaderProgram = Program{};
-    defer shaderProgram.deleteProgram();
-    if (shaderProgram.createProgram(vertexShader.shader, fragmentShader.shader) == gl.FALSE) {
-        gl.GetShaderInfoLog(shaderProgram.program, 512, null, &infoLog);
+        gl.GetShaderInfoLog(shader.program, 512, null, &infoLog);
         std.log.err("Failed to create shader program: {s}", .{infoLog});
+        gl.GetShaderInfoLog(shader.fragmentShader, 512, null, &infoLog);
+        std.log.err("Failed to compile fragment shader: {s}", .{infoLog});
         return error.LinkProgramFailed;
     }
-    vertexShader.deleteShader();
-    fragmentShader.deleteShader();
 
     // the points of our rectangle
     const vertices = [_]f32{
@@ -208,7 +182,7 @@ pub fn main() !void {
     mesh.createMesh();
     defer mesh.deleteMesh();
 
-    gl.PolygonMode(gl.FRONT_AND_BACK, gl.LINE);
+    gl.PolygonMode(gl.FRONT_AND_BACK, gl.TRIANGLES);
 
     // process frames until the user says to close the window.
     while (!window.shouldClose()) {
@@ -218,7 +192,7 @@ pub fn main() !void {
         gl.Clear(gl.COLOR_BUFFER_BIT);
 
         // draw triangle
-        gl.UseProgram(shaderProgram.program);
+        gl.UseProgram(shader.program);
         mesh.bindMesh();
 
         window.swapBuffers();
