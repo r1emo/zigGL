@@ -33,7 +33,7 @@ const Mesh = struct {
 
         // set the vertex attributes pointers
         gl.VertexAttribPointer(0, 3, gl.FLOAT, gl.FALSE, 3 * @sizeOf(f32), 0);
-        gl.EnableVertexArrayAttrib(self.VAO, 0);
+        gl.EnableVertexAttribArray(0);
 
         gl.BindBuffer(gl.ARRAY_BUFFER, 0);
         gl.BindVertexArray(0);
@@ -41,6 +41,7 @@ const Mesh = struct {
 
     fn bindMesh(self: *Mesh) void {
         gl.BindVertexArray(self.VAO);
+        defer gl.BindVertexArray(0);
         gl.BindBuffer(gl.ELEMENT_ARRAY_BUFFER, self.EBO);
         gl.DrawElements(gl.TRIANGLES, 6, gl.UNSIGNED_INT, 0);
     }
@@ -124,7 +125,12 @@ pub fn main() !void {
     defer glfw.terminate();
 
     // Create our window
-    const window = glfw.Window.create(640, 480, "Learning OpenGL", null, null, .{}) orelse {
+    const window = glfw.Window.create(640, 480, "Learning OpenGL", null, null, .{
+        .context_version_major = gl.info.version_major,
+        .context_version_minor = gl.info.version_minor,
+        .opengl_profile = .opengl_core_profile,
+        .opengl_forward_compat = true,
+    }) orelse {
         std.log.err("failed to create GLFW window: {?s}", .{glfw.getErrorString()});
         return error.CreateWindowFailed;
     };
