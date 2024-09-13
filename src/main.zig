@@ -33,7 +33,7 @@ const Mesh = struct {
 
         // set the vertex attributes pointers
         gl.VertexAttribPointer(0, 3, gl.FLOAT, gl.FALSE, 3 * @sizeOf(f32), 0);
-        gl.EnableVertexAttribArray(self.VAO);
+        gl.EnableVertexAttribArray(0);
 
         gl.BindBuffer(gl.ARRAY_BUFFER, 0);
         gl.BindVertexArray(0);
@@ -76,7 +76,6 @@ const Shader = struct {
 
         if (success == gl.FALSE)
             return success;
-        std.debug.print("Compiled Vertex Shader", .{});
 
         // get fragment shader and process it
         self.fragmentShader = gl.CreateShader(gl.FRAGMENT_SHADER);
@@ -88,7 +87,6 @@ const Shader = struct {
 
         if (success == gl.FALSE)
             return success;
-        std.debug.print("Compiled Fragment Shader", .{});
 
         self.program = gl.CreateProgram();
 
